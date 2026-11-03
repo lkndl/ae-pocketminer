@@ -26,22 +26,20 @@ using an attention-enabled Geometric Vector Perceptron graph neural network.
 
 ## Installation
 
-We provide a tested conda environment file, which requires Linux and a GPU. 
-With **Miniconda** or **Mambaforge** installed, run:
+Install the `ae-pocketminer` command with [uv](https://docs.astral.sh/uv/). It
+comes with the weights of both models, runs on the CPU, and works on Linux,
+macOS and Windows with Python 3.10 to 3.13.
 
 ```bash
-# Clone the repository
-git clone https://github.com/bowman-lab/ae-pocketminer.git
-cd ae-pocketminer
+uv tool install git+https://github.com/lkndl/ae-pocketminer@<tag>
 
-# Create and activate the environment (mamba is faster than conda)
-mamba env create -f environment.yml   # will take 5-10 mins
-conda activate aepocketminer
+# or from the wheel attached to a release, which saves cloning the repository
+uv tool install https://github.com/lkndl/ae-pocketminer/releases/download/<tag>/ae_pocketminer-<version>-py3-none-any.whl
 ```
 
-If you run into issues, also check the installation notes in the
-[PocketMiner repository](https://github.com/Mickdub/gvp/tree/pocket_pred), 
-since the package dependencies are essentially the same.
+To work on a checkout, `uv sync` sets up the environment and `uv run pytest`
+runs the tests; see [docs/development.md](docs/development.md). Training needs
+more, see [Training](#training).
 
 ---
 
@@ -49,49 +47,63 @@ since the package dependencies are essentially the same.
 
 For most users, we recommend trying the [PocketMiner web interface](https://pocketminer.azurewebsites.net/) first — no installation required. *(**Note**: this currently serves the PocketMiner model; a version pointing to AE-PocketMiner is coming soon.)*
 
-To run predictions locally instead, place your PDB file(s) in the `inputs/` folder and run `xtal_predict.py` directly.
+To run predictions locally instead:
 
 ```bash
-mkdir -p inputs 
-cp your_protein.pdb inputs/
-
-python src/xtal_predict.py src/example_config.yaml
+ae-pocketminer your_protein.pdb -o results -j
 ```
 
-Output files are written to `results/aepocketminer/`:
-- `results/*/your_protein-preds.npy` — per-residue pocket probabilities (1 x N)
-- `results/*/your_protein-attention_weights.npy` — attention weight matrix (N x N)
+This runs AE-PocketMiner and PocketMiner (`--model` picks one) on all protein
+chains of the first model in the file together, and writes to `results/`:
+- `your_protein_ae-pocketminer.tsv` — the per-residue pocket probabilities of
+  both models, by chain, residue number and insertion code
+- with `-j`: `your_protein_ae-pocketminer.json` and
+  `your_protein_pocketminer.json` — the same, as one
+  [residue score track](https://github.com/HelmholtzAI-Consultants-Munich/af-molstar-viewer/blob/main/docs/residue-score-track.md)
+  per model
+- with `--attention`: `your_protein_ae-pocketminer_attention.npz` — the
+  attention weights of AE-PocketMiner (heads x N x N), with the residue of
+  each row
+
+The inputs can be PDB or mmCIF files, also gzipped, or directories of them.
+Residues are named by their author chain and number. Modified residues count
+as their parent amino acid (MSE as MET). A residue that lacks N, CA, C or O
+is left out of the model input and is empty (null) in the outputs. When an
+input fails, the others are still predicted and the command exits with
+status 1.
 
 To write a PDB with B-factors set to pocket probability (for PyMOL
-visualisation):
+visualisation), from a checkout:
 
 ```bash
-python src/write_bfactor_pdb.py \
-    --pdb-name  your_protein \
-    --results-dir results/aepocketminer
+uv run python src/write_bfactor_pdb.py your_protein.pdb results/your_protein_ae-pocketminer.json
 ```
 
-To get allosteric predictions, provide the residue numbers of a cryptic pocket (known or predicted — e.g., `10 14 15`) and run the command below. This outputs 1) the top 40 residues influencing this cryptic pocket, and 2) a PDB with B-factors set to attention wieghts relative to this cryptic pocket (for PyMOL visulisation):
+To get allosteric predictions, provide the residues of a cryptic pocket (known or predicted — e.g., `A:10 A:14 A:15`) and run the commands below. This outputs 1) the top 40 residues influencing this cryptic pocket, and 2) a PDB with B-factors set to attention weights relative to this cryptic pocket (for PyMOL visualisation):
 
 ```bash
-python src/find_key_attention_residues.py \
-    --pdb inputs/your_protein.pdb \
-    --attention-weights results/aepocketminer/your_protein-attention_weights.npy \
-    --pocket-resnums 10 14 15 \
+ae-pocketminer your_protein.pdb -o results --attention
+uv run python src/find_key_attention_residues.py \
+    --pdb your_protein.pdb \
+    --attention-weights results/your_protein_ae-pocketminer_attention.npz \
+    --pocket-resnums A:10 A:14 A:15 \
     --top-n 40 \
-    --output-pdb results/aepocketminer/your_protein-attn_Bfactor.pdb
+    --output-pdb results/your_protein-attn_Bfactor.pdb
 ```
 
-You can also use PocketMiner instead of AE-PocketMiner in these scripts to generate predictions. The key **practical difference** is that PocketMiner predicts per-residue cryptic pocket probabilities only, with no allosteric predictions (i.e., no `attention_weights.npy` is generated). To do so, use the following settings in `src/example_config.yaml`:
-
-```yaml
-nn_path: /path/to/ae-pocketminer/models/pocketminer
-use_attention: False  
-```
+The key **practical difference** between the two models is that PocketMiner
+predicts per-residue cryptic pocket probabilities only, with no allosteric
+predictions: it has no attention weights.
 
 ---
 
 ## Training
+
+The training scripts in `src/` need the `train` dependency group
+(`uv sync --group train`) and import the model from `src/ae_pocketminer`.
+They have not been run since the models moved to Keras 2 (`tf-keras`) and
+TensorFlow 2.21. `environment.yml`, the authors' original GPU environment with
+TensorFlow 2.10, has no `tf-keras` and no longer fits.
 
 AE-PocketMiner was sequentially trained on two types of simulation labels: those derived from LIGSITE, and those derived from fpocket. Please refer to our paper for more detail. If you decide to retrain the model or extend this work, you can follow the steps below.
 
@@ -117,8 +129,8 @@ python src/train_fpocket_drug_score_labels.py *.yaml
 This fine-tunes the previous checkpoint using fpocket druggability score
 labels, which incorporate both pocket geometry and chemical environment.
 
-Both checkpoints are stored in `models/` — PocketMiner's is copied over from 
-the original repo, while AE-PocketMiner's is the one trained above.
+Both checkpoints are stored in `src/ae_pocketminer/weights/` — PocketMiner's is
+copied over from the original repo, while AE-PocketMiner's is the one trained above.
 
 ---
 

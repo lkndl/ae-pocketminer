@@ -1,85 +1,69 @@
+"""Write a copy of a structure with the values of a residue score track as B-factors.
+
+For viewing the predictions of `ae-pocketminer -j` in PyMOL or Chimera. Every
+atom of a residue gets the residue's value; residues the track does not hold,
+or holds as null, get --fill. Residues are matched by author chain, number and
+insertion code, in every chain and every model.
+
+    python src/write_bfactor_pdb.py input/x.pdb output/x_ae-pocketminer.json
+"""
+
 import argparse
-import warnings
+import json
+import sys
+from pathlib import Path
 
-import numpy as np
-from Bio.PDB import PDBParser, PDBIO
-
-# warnings.filterwarnings("ignore")
-
-"""
-This script annotates a protein structure with predicted per-residue pocket
-probabilities by assigning the prediction values to the B-factor field of
-each atom in a PDB file. The resulting PDB file can be visualized using
-PyMOL or Chimera to highlight regions of interest, such as predicted cryptic
-pockets.
-"""
-
-# Mapping 3-letter residue codes to 1-letter codes
-residue_types = {
-        "ALA" : "A" , "ARG" : "R" , "ASN" : "N" , "ASP" : "D" , "CYS" : "C" ,
-        "CYM" : "C" , "GLU" : "E" , "GLN" : "Q" , "GLY" : "G" , "HIS" : "H" ,
-        "ILE" : "I" , "LEU" : "L" , "LYS" : "K" , "MET" : "M" , "PHE" : "F" ,
-        "PRO" : "P" , "SER" : "S" , "THR" : "T" , "TRP" : "W" , "TYR" : "Y" ,
-        "VAL" : "V"}
+import gemmi
 
 
-def make_bfactor_pdb(path_to_pdb, pred_file_path, output_fname):
-    """Assigns per-residue predicted probabilities as B-factors and writes
-    out a new PDB file.
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('structure', help='the PDB or mmCIF file the track was computed on')
+    parser.add_argument('track', type=Path, help='a residue score track, e.g. <name>_ae-pocketminer.json')
+    parser.add_argument('-o', '--output', type=Path, default=None,
+                        help='where to write the structure, as mmCIF if it ends in .cif '
+                             '(default: the track with .pdb instead of .json)')
+    parser.add_argument('--fill', type=float, default=0.0,
+                        help='the B-factor of residues without a value (default: %(default)s)')
+    args = parser.parse_args()
 
-    path_to_pdb : path to the input PDB structure
-    pred_file_path : path to the {pdb_name}-preds.npy file from
-        xtal_predict.py, shape (1, num_residues)
-    output_fname : path to write the B-factor-annotated PDB to
-    """
-    p = PDBParser(QUIET=True)
-    structure = p.get_structure("structure", path_to_pdb)
+    track = json.loads(args.track.read_text(encoding='utf-8'))
+    if track.get('index') != 'auth':
+        sys.exit(f"{args.track} numbers residues by {track.get('index')!r}, only 'auth' is supported")
+    values = {(v['chain'], v['seq'], v.get('ins_code', '')): v['value'] for v in track['values']}
 
-    # get only the first chain as that's the one where we have predictions
-    for chain in structure.get_chains():
-        break
+    st = gemmi.read_structure(args.structure)
+    found = set()
+    for model in st:
+        for chain in model:
+            for residue in chain:
+                key = (chain.name, residue.seqid.num, residue.seqid.icode.strip())
+                value = values.get(key)
+                if key in values:
+                    found.add(key)
+                bfactor = args.fill if value is None else float(value)
+                for atom in residue:
+                    atom.b_iso = bfactor
 
-    # Load predicted probabilities
-    predictions = np.load(pred_file_path)
+    if len(found) < len(values):
+        print(f"WARNING: {len(values) - len(found)} of the {len(values)} residues of the track "
+              f"are not in {args.structure}", file=sys.stderr)
 
-    # Assign predicted values as B-factors to atoms
-    num_res = 0
-    for res in chain.get_residues():
-        if res.get_resname() in residue_types:
-            for atom in res.get_atoms():
-                atom.set_bfactor(predictions[0, num_res])
-            num_res = num_res + 1
+    output = args.output or args.track.with_suffix('.pdb')
+    if output.suffix.lower() == '.cif':
+        st.setup_entities()
+        st.make_mmcif_document().write_file(str(output))
+    else:
+        # the PDB format has room for two characters of chain name only
+        if any(len(chain.name) > 2 for chain in st[0]):
+            st.shorten_chain_names()
+        st.write_pdb(str(output))
+    print(f'Wrote {output}')
 
-    io = PDBIO()
-    io.set_structure(structure)
-    io.save(output_fname)
-    print(f'Wrote B-factor-annotated PDB to {output_fname}', flush=True)
+    print('\nConsider running the following commands in PyMOL for visualization:')
+    print(f'    load {output}, prot')
+    print('    spectrum b, blue_white_red, prot, minimum=0.5, maximum=0.8')
 
 
 if __name__ == '__main__':
-    # These defaults reproduce the original hardcoded values; override any
-    # of them from the command line instead of editing this file, e.g.:
-    #   python src/make_pdb.py --pdb-name 9m1h-chainA-rmHOH-rmPGE2
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--pdb-name', default='XXXX',
-                         help='basename (no extension) of the PDB in inputs/ and of the '
-                              '*-preds.npy file in results-dir/')
-    parser.add_argument('--input-dir', default='inputs',
-                         help='directory containing the source PDB file')
-    parser.add_argument('--results-dir', default='results',
-                         help='directory containing {pdb_name}-preds.npy; '
-                              '(e.g. results, results/aepocketminer, results/pocketminer)')
-    parser.add_argument('--output-pdb', default=None,
-                         help='path to write the output PDB to; defaults to '
-                              '{results_dir}/{pdb_name}-Bfactor.pdb')
-    args = parser.parse_args()
-
-    results_dir = args.results_dir 
-    path_to_pdb = f'{args.input_dir}/{args.pdb_name}.pdb'
-    pred_file_path = f'{results_dir}/{args.pdb_name}-preds.npy'
-    output_fname = args.output_pdb or f'{results_dir}/{args.pdb_name}-Bfactor.pdb'
-
-    make_bfactor_pdb(path_to_pdb, pred_file_path, output_fname)
-    print('\nConsider running the following commands in PyMOL for visualization:')
-    print(f'    load {output_fname}, prot')
-    print('    spectrum b, blue_white_red, prot, minimum=0.5, maximum=0.8')
+    main()

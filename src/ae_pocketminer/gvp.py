@@ -1,7 +1,8 @@
 import tensorflow as tf
-import tqdm, pdb
-from tensorflow.keras import Model
-from tensorflow.keras.layers import *
+# Keras 2: the checkpoints were written with it, and Keras 3 (tf.keras from
+# TensorFlow 2.16 on) names the variables differently, so most would not load
+from tf_keras import Model
+from tf_keras.layers import Dense, Dropout, Layer, LayerNormalization
 
 def norm_no_nan(x, axis=-1, keepdims=False, eps=1e-8, sqrt=True):
     out = tf.maximum(tf.math.reduce_sum(tf.math.square(x), axis, keepdims), eps)

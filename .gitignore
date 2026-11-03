@@ -1,0 +1,17 @@
+# local inputs and results
+input/
+output/
+# uv's placeholder script and a local prediction config
+main.py
+src/adjusted.yaml
+
+# Python and build artefacts
+__pycache__/
+*.py[cod]
+.venv/
+.uv-cache/
+.pytest_cache/
+dist/
+build/
+
+.DS_Store

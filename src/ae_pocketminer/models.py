@@ -3,9 +3,10 @@
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import *
-from tensorflow.keras.layers import *
-from gvp import *
+# Keras 2, see gvp.py
+from tf_keras import Model, Sequential
+from tf_keras.layers import Dense, Dropout, Embedding, LayerNormalization, MultiHeadAttention
+from .gvp import *
 
 # Set to True to re-enable the verbose shape/debug prints that were present
 # in the attention-development version of this file. Off by default since
@@ -22,12 +23,7 @@ class MQAModel(Model):
         # --- ATTENTION ---
         # use_attention=False reproduces the original PocketMiner model exactly.
         # use_attention=True adds attention, i.e. AE-PocketMiner.
-        use_attention=False, attention_heads=2,
-        # if True, save the attention weights of the last prediction batch to
-        # disk (only applies when train=False and use_attention=True)
-        save_attention_weights=False,
-        # filename (or path) used when save_attention_weights=True
-        attention_weights_filename='attention_weights.npy'):
+        use_attention=False, attention_heads=2):
             
         super(MQAModel, self).__init__()
         
@@ -39,8 +35,6 @@ class MQAModel(Model):
 
         # ATTENTION 
         self.use_attention = use_attention
-        self.save_attention_weights = save_attention_weights
-        self.attention_weights_filename = attention_weights_filename
 
         # Hyperparameters
         self.nv, self.ns = node_features
@@ -105,8 +99,12 @@ class MQAModel(Model):
                 LayerNormalization(),
                 Dense(1, activation='sigmoid')])
 
-    def call(self, X, S, mask, train=False, res_level=False, ablate_aa_type=False):
+    def call(self, X, S, mask, train=False, res_level=False, ablate_aa_type=False,
+             return_attention=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]
+        # with return_attention=True, returns (out, attention): the attention
+        # weights [B, heads, N, N], or None without use_attention
+        attention_weights = None
         if DEBUG:
             tf.print("Shapes:", tf.shape(X), tf.shape(S), tf.shape(mask))
 
@@ -145,10 +143,6 @@ class MQAModel(Model):
                 tf.print("attended_scalars.shape:", tf.shape(attended_scalars))
                 tf.print("attention_weights.shape:", tf.shape(attention_weights))
 
-            if train == False and self.save_attention_weights:
-                # only save weights when making predictions, not during training
-                np.save(self.attention_weights_filename, attention_weights)
-
             # combine original scalar features with the attended ones
             h_V_out = attended_scalars + h_V_out
 
@@ -165,6 +159,8 @@ class MQAModel(Model):
         else:
             out = tf.squeeze(self.dense(out, training=train), -1) # + 0.5 # [B, N]
 
+        if return_attention:
+            return out, attention_weights
         return out
 
 class CPDModel(Model):
@@ -290,6 +286,8 @@ class Decoder(Model): # DECODER
         mask_bw = mask_1D * mask_attend
         mask_fw = mask_1D * (1. - mask_attend)
         
+        import tqdm
+
         N_batch, N_nodes = h_V.shape[0], h_V.shape[1] 
         
         h_S = np.zeros((N_batch, N_nodes, self.ss), dtype=np.float32)

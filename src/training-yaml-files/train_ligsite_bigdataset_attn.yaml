@@ -42,11 +42,6 @@ NUM_HEADS: 2
 # use_attention=True -> AE-PocketMiner (this config)
 # use_attention=False -> original PocketMiner architecture
 use_attention: True
-# saves attention_weights.npy at prediction time (train=False)
-save_attention_weights: False
-# optional custom filename/path for the saved attention weights (only used
-# when save_attention_weights=True); defaults to 'attention_weights.npy'
-# attention_weights_filename: 'attention_weights.npy'
 # -----END GVP INPUT PARAMETERS ---- #
 
 # ------- GENERAL DATA PATHS ---- #

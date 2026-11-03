@@ -1,0 +1,69 @@
+[project]
+name = "ae-pocketminer"
+dynamic = ["version"]
+description = "Cryptic pocket prediction with AE-PocketMiner and PocketMiner, written as residue score tracks"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+# TensorFlow 2.21 has wheels for Python 3.10 to 3.13 only.
+requires-python = ">=3.10,<3.14"
+# Every dependency needs a lower bound: `uv tool install` resolves from here and
+# does not read uv.lock.
+dependencies = [
+    "gemmi>=0.7.3",
+    "numpy>=1.26",
+    # tf-keras is Keras 2, which wrote the checkpoints. Each tf-keras release pins
+    # tensorflow to its own minor version, so the two move together.
+    "tensorflow>=2.21,<2.22",
+    "tf-keras>=2.21,<2.22",
+]
+
+[project.scripts]
+ae-pocketminer = "ae_pocketminer.predict:main"
+
+[project.urls]
+Repository = "https://github.com/lkndl/ae-pocketminer"
+Upstream = "https://github.com/bowman-lab/ae-pocketminer"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+# only for the training scripts in src/, never on the prediction path
+train = [
+    "mdtraj>=1.10.3",
+    "pandas>=2.2",
+    "pyyaml>=6.0.2",
+    "scikit-learn>=1.5",
+    "scipy>=1.13",
+    "tqdm>=4.66",
+]
+
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+# The version comes from git: tag v0.2.0 builds as 0.2.0, a later commit as
+# 0.2.1.devN+g<hash>. Without git, e.g. from a ZIP download, it is 0.0.0.
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ae_pocketminer"]
+
+# the sdist would otherwise hold every file tracked by git, about 500 MB of training data
+[tool.hatch.build.targets.sdist]
+only-include = ["src/ae_pocketminer", "tests", "LICENSE", "README.md", "pyproject.toml"]
+
+[tool.uv]
+default-groups = ["dev"]
+# rebuild on a new commit or tag, or the version in the metadata goes stale
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # TensorFlow's autograph on Python 3.13, not ours
+    "ignore:.*got an unexpected keyword argument '___pyct_anno':DeprecationWarning",
+]

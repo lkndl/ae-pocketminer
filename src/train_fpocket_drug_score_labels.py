@@ -28,6 +28,10 @@ os.environ['POCKETMINER_DATA_DIR'] = DATA_DIR
 os.environ['TRAIN_DATA_SUFFIX'] = training_config.get('train_data_suffix', '')
 # --- INPUTS ---    
 
+# tf.keras is Keras 2 (tf-keras), like the models in ae_pocketminer; this must
+# be set before TensorFlow is first imported
+os.environ.setdefault('TF_USE_LEGACY_KERAS', '1')
+
 import tensorflow as tf
 import tqdm
 import mdtraj as md
@@ -35,7 +39,7 @@ import numpy as np
 from tensorflow import keras as keras
 
 from datasets import *
-from models import *
+from ae_pocketminer.models import *
 from util import save_checkpoint, load_checkpoint
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'

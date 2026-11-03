@@ -28,6 +28,10 @@ os.environ['POCKETMINER_DATA_DIR'] = DATA_DIR
 os.environ['TRAIN_DATA_SUFFIX'] = training_config.get('train_data_suffix', '')
 # --- INPUTS ---    
 
+# tf.keras is Keras 2 (tf-keras), like the models in ae_pocketminer; this must
+# be set before TensorFlow is first imported
+os.environ.setdefault('TF_USE_LEGACY_KERAS', '1')
+
 import tensorflow as tf
 
 #### GPU INFO ####
@@ -54,7 +58,7 @@ import numpy as np
 from tensorflow import keras
 import tqdm
 from datasets import *  
-from models import *
+from ae_pocketminer.models import *
 from util import save_checkpoint, load_checkpoint
 
 
@@ -131,9 +135,7 @@ def make_model():
     if use_pretrained:
         model = MQAModel(node_features=(8, 100), edge_features=(1,32),
                          hidden_dim=(16,100), dropout=1e-3,
-                         use_attention=use_attention, attention_heads=NUM_HEADS,
-                         save_attention_weights=save_attention_weights,
-                         attention_weights_filename=attention_weights_filename)
+                         use_attention=use_attention, attention_heads=NUM_HEADS)
     else:
         model = MQAModel(node_features=(8, 50), edge_features=(1, 32),
                          hidden_dim=(16, HIDDEN_DIM),
@@ -141,9 +143,7 @@ def make_model():
                          num_layers=NUM_LAYERS, dropout=DROPOUT_RATE,
                          ablate_sidechain_vectors=ablate_sidechain_vectors,
                          use_lm=use_lm, squeeze_lm=squeeze_lm,
-                         use_attention=use_attention,
-                         save_attention_weights=save_attention_weights,
-                         attention_weights_filename=attention_weights_filename)
+                         use_attention=use_attention)
     return model
 
 def main():
@@ -872,16 +872,6 @@ if 'use_attention' in training_config:
     use_attention = training_config['use_attention']
 else:
     use_attention = True
-
-if 'save_attention_weights' in training_config:
-    save_attention_weights = training_config['save_attention_weights']
-else:
-    save_attention_weights = False
-
-# custom filename/path for the saved attention weights (only used when
-# save_attention_weights=True); defaults to 'attention_weights.npy' to match
-# original behavior if not specified in the yaml
-attention_weights_filename = training_config.get('attention_weights_filename', 'attention_weights.npy')
 
 # -----END GVP INPUT PARAMETERS ---- #
 

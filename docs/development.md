@@ -92,6 +92,13 @@ coordinates, so it lands on the right chain, number and insertion code:
   `pocketminer-cryptic-pocket`, `sequential` on `[0, 1]`, both with the
   `blues` palette, since they measure the same thing and PeSTo (greens), IARA
   (purples) and ScanNet (orange-red) do not use it.
+- The tracks are version 2 of the format. Each entry has the author number as
+  `idx` and the residue's name in the file as `res_name`: MSE stays MSE,
+  though it is predicted as M. gemmi takes that name from `auth_comp_id` in
+  mmCIF, where the format names `label_comp_id`; the two agree in PDB entries
+  and AlphaFold models. `provenance.source_sha1sum` is the SHA-1 of the input,
+  of its decompressed bytes if it is gzipped (told by its first two bytes, not
+  its suffix).
 - The model never writes into the working directory: `MQAModel` returns the
   attention matrix with `return_attention=True`.
 - A failed input is reported, the others are still predicted, and the command

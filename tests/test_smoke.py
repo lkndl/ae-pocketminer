@@ -5,6 +5,8 @@ label chains A and B, and trypsin has insertion codes (184A, 188A, 221A).
 """
 
 import csv
+import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -22,6 +24,8 @@ FIXTURE = FIXTURES / "2ptc.cif"
 # predictions of the original code (see docs/development.md)
 EXPECTED = FIXTURES / "2ptc_expected.tsv"
 MODELS = ["ae-pocketminer", "pocketminer"]
+# the helper script that writes a track into the B-factors, outside the package
+WRITE_BFACTOR = Path(__file__).parents[1] / "src" / "write_bfactor_pdb.py"
 
 
 def run(*args):
@@ -41,6 +45,16 @@ def author_residues(path):
     st = gemmi.read_structure(str(path))
     return {(chain.name, residue.seqid.num, residue.seqid.icode.strip())
             for chain in st[0] for residue in chain if is_amino_acid(residue)}
+
+
+def label_comp_ids(path):
+    # (chain, number, insertion code) -> _atom_site.label_comp_id, read from the file as text
+    table = gemmi.cif.read(str(path)).sole_block().find(
+        "_atom_site.", ["auth_asym_id", "auth_seq_id", "pdbx_PDB_ins_code", "label_comp_id"])
+    names = {}
+    for chain, number, icode, name in table:
+        names.setdefault((chain, int(number), "" if gemmi.cif.is_null(icode) else icode), name)
+    return names
 
 
 def write_odd_structure(path):
@@ -65,7 +79,7 @@ def write_odd_structure(path):
 
 def read_track(path):
     track = json.loads(path.read_text(encoding="utf-8"))
-    values = {(v["chain"], v["seq"], v.get("ins_code", "")): v["value"] for v in track["values"]}
+    values = {(v["chain"], v["idx"], v.get("ins_code", "")): v["value"] for v in track["values"]}
     return track, values
 
 
@@ -109,7 +123,7 @@ def test_track(results, model):
     track, values = read_track(out_dir / f"2ptc_{model}.json")
 
     # the fields af-molstar-viewer requires, see docs/residue-score-track.md there
-    assert track["schema_version"] == 1
+    assert track["schema_version"] == 2
     assert track["id"] == f"{model}-cryptic-pocket"
     assert track["label"]
     assert track["index"] == "auth"
@@ -121,14 +135,20 @@ def test_track(results, model):
     assert provenance["tool"] == "ae-pocketminer"
     assert provenance["tool_version"] not in ("", "unknown")
     assert provenance["source_structure"] == "2ptc.cif"
+    assert provenance["source_sha1sum"] == hashlib.sha1(FIXTURE.read_bytes()).hexdigest()
     assert provenance["parameters"] == {"model": model}
+    assert list(provenance) == ["tool", "tool_version", "created", "source_structure", "source_sha1sum",
+                                "parameters"]
 
-    # one entry per residue, each a probability
+    # one entry per residue, each a probability, named as in the file
     assert len(values) == len(track["values"]), "duplicate residues"
+    names = label_comp_ids(FIXTURE)
     for entry in track["values"]:
-        assert set(entry) <= {"chain", "seq", "ins_code", "value"}
-        assert isinstance(entry["seq"], int)
+        assert list(entry) in (["chain", "idx", "res_name", "value"],
+                               ["chain", "idx", "res_name", "ins_code", "value"])
+        assert isinstance(entry["idx"], int)
         assert entry.get("ins_code", "x") != ""
+        assert entry["res_name"] == names[(entry["chain"], entry["idx"], entry.get("ins_code", ""))]
         assert 0.0 <= entry["value"] <= 1.0
 
     # on the author chains and numbers, insertion codes included, every protein residue
@@ -154,7 +174,7 @@ def test_values_match_the_recorded_ones(results, model):
 @pytest.mark.parametrize("model", MODELS)
 def test_odd_residues(results, model):
     result, out_dir = results
-    _, values = read_track(out_dir / f"odd_{model}.json")
+    track, values = read_track(out_dir / f"odd_{model}.json")
 
     # left out of the model input and null, but still in the track
     assert values[("E", 100, "")] is None
@@ -163,6 +183,11 @@ def test_odd_residues(results, model):
     assert values[("E", 104, "")] is not None
     assert sum(value is None for value in values.values()) == 2
     assert set(values) == author_residues(FIXTURE)
+
+    # named as in the file, not as their parent
+    names = {(v["chain"], v["idx"], v.get("ins_code", "")): v["res_name"] for v in track["values"]}
+    assert names[("E", 101, "")] == "UNK"
+    assert names[("E", 104, "")] == "MSE"
 
     assert "odd.pdb: 2 residues" in result.stderr
 
@@ -178,6 +203,43 @@ def test_attention(results):
     _, values = read_track(out_dir / "2ptc_ae-pocketminer.json")
     keys = list(zip(data["chain"].tolist(), data["seq"].tolist(), data["ins_code"].tolist()))
     assert keys == list(values)
+
+
+def test_sha1sum_reads_through_gzip(tmp_path):
+    # the SHA-1 of the decompressed bytes, also without a .gz suffix
+    from ae_pocketminer.predict import sha1sum
+
+    data = FIXTURE.read_bytes()
+    for name in ("2ptc.cif.gz", "2ptc.cif"):
+        (tmp_path / name).write_bytes(gzip.compress(data))
+        assert sha1sum(tmp_path / name) == hashlib.sha1(data).hexdigest()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_write_bfactor_pdb(results, tmp_path, version):
+    # the helper reads tracks of both versions
+    _, out_dir = results
+    track, values = read_track(out_dir / "2ptc_ae-pocketminer.json")
+    if version == 1:
+        track["schema_version"] = 1
+        for entry in track["values"]:
+            entry["seq"] = entry.pop("idx")
+            del entry["res_name"]
+    path = tmp_path / "track.json"
+    path.write_text(json.dumps(track), encoding="utf-8")
+
+    output = tmp_path / "2ptc.pdb"
+    result = subprocess.run([sys.executable, WRITE_BFACTOR, FIXTURE, path, "-o", output],
+                            capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "WARNING" not in result.stderr
+
+    st = gemmi.read_structure(str(output))
+    bfactors = {(chain.name, residue.seqid.num, residue.seqid.icode.strip()): residue[0].b_iso
+                for chain in st[0] for residue in chain}
+    # PDB B-factors have two decimals
+    for key, value in values.items():
+        assert bfactors[key] == pytest.approx(value, abs=0.006)
 
 
 def test_mismatched_checkpoint_fails(tmp_path):

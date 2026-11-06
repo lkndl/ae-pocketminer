@@ -30,7 +30,9 @@ def main():
     track = json.loads(args.track.read_text(encoding='utf-8'))
     if track.get('index') != 'auth':
         sys.exit(f"{args.track} numbers residues by {track.get('index')!r}, only 'auth' is supported")
-    values = {(v['chain'], v['seq'], v.get('ins_code', '')): v['value'] for v in track['values']}
+    # version 1 tracks name the residue number 'seq'
+    number = 'seq' if track.get('schema_version') == 1 else 'idx'
+    values = {(v['chain'], v[number], v.get('ins_code', '')): v['value'] for v in track['values']}
 
     st = gemmi.read_structure(args.structure)
     found = set()

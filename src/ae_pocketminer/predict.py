@@ -12,6 +12,8 @@ outputs.
 """
 
 import argparse
+import gzip
+import hashlib
 import json
 import os
 import re
@@ -186,7 +188,7 @@ def track_entries(residues):
             continue
         seen.add(key)
 
-        entry = {'chain': residue.chain, 'seq': residue.seq}
+        entry = {'chain': residue.chain, 'idx': residue.seq, 'res_name': residue.name}
         if residue.icode:
             entry['ins_code'] = residue.icode
         entries.append((entry, residue))
@@ -199,10 +201,22 @@ def value(residue, p):
     return None if residue.index is None else round(float(p[residue.index]), 4)
 
 
-def write_track(filepath, name, entries, p, source):
+def sha1sum(path):
+    """The SHA-1 of a file, as `sha1sum` prints it; of the decompressed bytes if it is gzipped."""
+    with open(path, 'rb') as fs:
+        gzipped = fs.read(2) == b'\x1f\x8b'
+    opener = gzip.open if gzipped else open
+    digest = hashlib.sha1()
+    with opener(path, 'rb') as fs:
+        for chunk in iter(lambda: fs.read(2**20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_track(filepath, name, entries, p, source, source_sha1sum):
     # one residue score track, following docs/residue-score-track.md of af-molstar-viewer
     track = {
-        'schema_version': 1,
+        'schema_version': 2,
         'id': f"{name}-cryptic-pocket",
         'label': f"{MODELS[name]['label']} cryptic pocket",
         'index': "auth",
@@ -219,6 +233,7 @@ def write_track(filepath, name, entries, p, source):
             'tool_version': package_version(),
             'created': datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             'source_structure': source,
+            'source_sha1sum': source_sha1sum,
             'parameters': {'model': name},
         },
         'values': [],
@@ -304,8 +319,9 @@ def run(path, models, out_dir, args):
         if num_duplicates > 0:
             print(f"WARNING: {path}: {num_duplicates} residues share their chain, number and insertion "
                   "code with an earlier one and are left out of the tracks", file=sys.stderr)
+        source_sha1sum = sha1sum(path)
         for name, p in predictions.items():
-            write_track(directory / f"{stem}_{name}.json", name, entries, p, path.name)
+            write_track(directory / f"{stem}_{name}.json", name, entries, p, path.name, source_sha1sum)
 
     if args.attention:
         write_attention(directory / f"{stem}_ae-pocketminer_attention.npz", residues, attention)
